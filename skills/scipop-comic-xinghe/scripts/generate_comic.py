@@ -40,28 +40,54 @@ class SciPopComicGenerator:
             base_url=self.BASE_URL
         )
 
-    def _call_chat_api(self, messages: list, stream: bool = True, max_retries: int = 3) -> dict:
-        """调用文本/多模态API，支持重试和流式响应"""
+    def _call_chat_api(self, messages: list, stream: bool = True, web_search: bool = False, max_retries: int = 3) -> dict:
+        """调用文本/多模态API，支持重试和流式响应
+
+        Args:
+            messages: 消息列表
+            stream: 是否使用流式响应
+            web_search: 是否启用联网搜索增强
+            max_retries: 最大重试次数
+
+        Returns:
+            {"content": "完整响应内容", "reasoning": "思考过程(可选)"}
+        """
+        extra_body = {}
+        if web_search:
+            extra_body["web_search"] = {"enable": True}
+
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
                     model=self.ANALYSIS_MODEL,
                     messages=messages,
                     stream=stream,
-                    max_completion_tokens=65536
+                    max_completion_tokens=65536,
+                    extra_body=extra_body if extra_body else None
                 )
 
                 if stream:
-                    # 解析流式响应
+                    # 解析流式响应 - 分别收集思考过程和最终回答
                     full_content = ""
+                    reasoning_content = ""
                     for chunk in response:
-                        if chunk.choices and len(chunk.choices) > 0:
-                            delta = chunk.choices[0].delta
-                            if hasattr(delta, 'content') and delta.content:
-                                full_content += delta.content
-                    return {"content": full_content}
+                        if not chunk.choices or len(chunk.choices) == 0:
+                            continue
+                        delta = chunk.choices[0].delta
+                        # 处理思考过程（reasoning_content）
+                        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                            reasoning_content += delta.reasoning_content
+                            # 可选：打印思考进度
+                            # print(delta.reasoning_content, end="", flush=True)
+                        # 处理最终回答（content）
+                        if hasattr(delta, 'content') and delta.content:
+                            full_content += delta.content
+                    return {"content": full_content, "reasoning": reasoning_content}
                 else:
-                    return {"content": response.choices[0].message.content}
+                    result = {"content": response.choices[0].message.content}
+                    if hasattr(response.choices[0].message, "reasoning_content"):
+                        result["reasoning"] = response.choices[0].message.reasoning_content
+                    return result
 
             except Exception as e:
                 error_msg = str(e)

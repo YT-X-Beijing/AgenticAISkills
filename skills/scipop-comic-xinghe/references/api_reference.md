@@ -33,55 +33,78 @@ Authorization: Bearer $AISTUDIO_API_KEY
 
 ### 请求格式
 
-```json
-{
-  "model": "ernie-5.0-thinking-preview",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-  ],
-  "stream": true,
-  "response_format": {"type": "json_object"},
-  "max_completion_tokens": 65536,
-  "extra_body": {
-    "web_search": {
-      "enable": true
-    }
-  }
-}
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="https://aistudio.baidu.com/llm/lmapi/v3"
+)
+
+response = client.chat.completions.create(
+    model="ernie-5.0-thinking-preview",
+    messages=[
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."}
+    ],
+    stream=True,
+    extra_body={
+        "web_search": {
+            "enable": True
+        }
+    },
+    max_completion_tokens=65536
+)
 ```
 
 **关键参数说明**：
 
 | 参数 | 说明 |
 |-----|------|
-| `stream` | 是否流式返回，默认 `true` |
+| `stream` | 是否流式返回，默认 `true`（推荐） |
 | `max_completion_tokens` | 最大输出token数，支持高达 65536 |
 | `extra_body.web_search.enable` | 是否启用联网搜索增强 |
 
 ### 多模态请求（图片+文本）
 
-```json
-{
-  "model": "ernie-5.0-thinking-preview",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
+```python
+response = client.chat.completions.create(
+    model="ernie-5.0-thinking-preview",
+    messages=[
         {
-          "type": "image_url",
-          "image_url": {"url": "data:image/png;base64,..."}
-        },
-        {
-          "type": "text",
-          "text": "分析这张图片..."
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,..."}
+                },
+                {
+                    "type": "text",
+                    "text": "分析这张图片..."
+                }
+            ]
         }
-      ]
-    }
-  ],
-  "stream": true,
-  "max_completion_tokens": 65536
-}
+    ],
+    stream=True,
+    max_completion_tokens=65536
+)
+```
+
+### 流式响应解析
+
+> ⚠️ **思考模型特性**: `ernie-5.0-thinking-preview` 会先输出思考过程，再输出最终回答。
+
+```python
+for chunk in response:
+    if not chunk.choices or len(chunk.choices) == 0:
+        continue
+    # 思考过程（reasoning_content）
+    if hasattr(chunk.choices[0].delta, "reasoning_content") and chunk.choices[0].delta.reasoning_content:
+        # 可选：打印思考过程
+        print(chunk.choices[0].delta.reasoning_content, end="", flush=True)
+    # 最终回答（content）
+    if hasattr(chunk.choices[0].delta, "content") and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
 ```
 
 ### 返回格式

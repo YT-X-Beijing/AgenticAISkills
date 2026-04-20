@@ -124,23 +124,45 @@ print('API 连接成功:', response.choices[0].message.content[:20])
 
 **API 调用模板**:
 
-```bash
-curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
-    "model": "ernie-5.0-thinking-preview",
-    "messages": [
-      {
-        "role": "system",
-        "content": "你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"
-      },
-      {
-        "role": "user",
-        "content": "【科普文章全文】"
-      }
+> 💡 **思考模型特性**: `ernie-5.0-thinking-preview` 会先输出思考过程（`reasoning_content`），再输出最终回答（`content`）。
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="https://aistudio.baidu.com/llm/lmapi/v3"
+)
+
+response = client.chat.completions.create(
+    model="ernie-5.0-thinking-preview",
+    messages=[
+        {
+            "role": "system",
+            "content": "你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"
+        },
+        {
+            "role": "user",
+            "content": "【科普文章全文】"
+        }
     ],
-    "stream": true,
-    "response_format": {"type": "json_object"},
-    "max_completion_tokens": 65536
-  }'
+    stream=True,
+    extra_body={
+        "web_search": {"enable": True}  # 可选：启用联网搜索增强
+    },
+    max_completion_tokens=65536
+)
+
+# 解析流式响应 - 分别处理思考过程和最终回答
+for chunk in response:
+    if not chunk.choices or len(chunk.choices) == 0:
+        continue
+    # 思考过程（可选打印）
+    if hasattr(chunk.choices[0].delta, "reasoning_content") and chunk.choices[0].delta.reasoning_content:
+        pass  # print(chunk.choices[0].delta.reasoning_content, end="", flush=True)
+    # 最终回答
+    if hasattr(chunk.choices[0].delta, "content") and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
 ```
 
 **返回结构**:
