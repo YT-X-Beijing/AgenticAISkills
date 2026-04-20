@@ -139,7 +139,7 @@ response = client.chat.completions.create(
     messages=[
         {
             "role": "system",
-            "content": "你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"
+            "content": "你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"caption" 中文科普旁白（20字以内，简洁有力）、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"
         },
         {
             "role": "user",
@@ -176,11 +176,21 @@ for chunk in response:
     {
       "id": 1,
       "scene": "场景描述",
+      "caption": "科普旁白，20字以内",
       "image_prompt": "中文图像生成提示，描述画面内容、风格、构图等"
     }
   ]
 }
 ```
+
+**字段说明**:
+
+| 字段 | 说明 |
+|-----|------|
+| `id` | Panel 编号（从 1 开始） |
+| `scene` | 场景描述，用于理解上下文 |
+| `caption` | **科普旁白**，中文，20字以内，简洁有力，用于展示在图像中或作为配文 |
+| `image_prompt` | 图像生成提示词 |
 
 **用户确认**: 展示 `recommended_panels` 与 `recommendation_reason`，询问用户是否采用。若不同意，询问期望数量（4-6），调整 `panels` 数组。
 

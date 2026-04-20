@@ -149,7 +149,7 @@ class SciPopComicGenerator:
         print("=" * 50)
         print("Phase 1: 文章解析中...")
 
-        system_prompt = """你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"""
+        system_prompt = """你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"caption" 中文科普旁白（20字以内，简洁有力）、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -167,6 +167,10 @@ class SciPopComicGenerator:
         print(f"推荐 Panel 数量: {data['recommended_panels']}")
         print(f"推荐理由: {data['recommendation_reason']}")
         print(f"风格种子: {data['style_seed']}")
+        print(f"\n各 Panel 旁白:")
+        for panel in data['panels']:
+            caption = panel.get('caption', '（无旁白）')
+            print(f"  Panel {panel['id']}: {caption}")
 
         return data
 
@@ -186,10 +190,17 @@ class SciPopComicGenerator:
         style_seed = phase1_result["style_seed"]
         panels = phase1_result["panels"]
         panel_paths = []
+        captions = {}
 
         for panel in panels:
             panel_id = panel["id"]
             image_prompt = panel["image_prompt"]
+            caption = panel.get("caption", "")
+
+            # 保存旁白
+            captions[panel_id] = caption
+
+            print(f"  生成 Panel {panel_id}: {caption}")
 
             image_bytes = self.phase2_generate_panel(image_prompt, style_seed, panel_id)
 
@@ -197,10 +208,15 @@ class SciPopComicGenerator:
             panel_path = output_dir / f"panel_{panel_id:02d}.png"
             panel_path.write_bytes(image_bytes)
             panel_paths.append(str(panel_path))
-            print(f"  已保存: {panel_path}")
+            print(f"    已保存: {panel_path}")
 
             # 避免请求过快
             time.sleep(1)
+
+        # 保存所有旁白到文件
+        captions_path = output_dir / "captions.json"
+        captions_path.write_text(json.dumps(captions, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n  旁白已保存: {captions_path}")
 
         return panel_paths
 
