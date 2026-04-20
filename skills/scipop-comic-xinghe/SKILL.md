@@ -25,7 +25,8 @@ description: |
 | 项目 | 要求 |
 |------|------|
 | **API Key** | 星河社区 API Key，环境变量 `AISTUDIO_API_KEY` |
-| **API 端点** | `https://aistudio.baidu.com/llm/lmapi/v3/chat/completions` |
+| **API 端点** | `https://aistudio.baidu.com/llm/lmapi/v3` |
+| **SDK** | `pip install openai` |
 | **分析模型** | `ernie-5.0-thinking-preview`（原生全模态大模型） |
 | **生图模型** | `ernie-image-turbo`（图像生成 API） |
 
@@ -35,8 +36,23 @@ description: |
 # 设置 API Key
 export AISTUDIO_API_KEY="your-key"
 
-# 验证连通性
-curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{"model": "ernie-5.0-thinking-preview", "messages": [{"role": "user", "content": "ping"}], "stream": true, "max_completion_tokens": 100}'
+# 安装依赖
+pip install openai
+
+# 验证连通性（Python）
+python -c "
+from openai import OpenAI
+client = OpenAI(
+    api_key='$AISTUDIO_API_KEY',
+    base_url='https://aistudio.baidu.com/llm/lmapi/v3'
+)
+response = client.chat.completions.create(
+    model='ernie-5.0-thinking-preview',
+    messages=[{'role': 'user', 'content': 'ping'}],
+    max_completion_tokens=10
+)
+print('API 连接成功:', response.choices[0].message.content[:20])
+"
 ```
 
 ---
@@ -108,12 +124,6 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
 
 **API 调用模板**:
 
-> ⚠️ **流式响应说明**: `ernie-5.0-thinking-preview` 默认使用流式响应（`stream: true`）。
-> - **curl 命令**：建议设置 `"stream": false` 获取非流式响应，便于直接解析 JSON
-> - **Python 脚本**：已内置流式响应解析逻辑，支持 `stream: true`
-
-**方式一：非流式响应（推荐用于 curl）**
-
 ```bash
 curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
     "model": "ernie-5.0-thinking-preview",
@@ -127,39 +137,10 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
         "content": "【科普文章全文】"
       }
     ],
-    "stream": false,
+    "stream": true,
     "response_format": {"type": "json_object"},
     "max_completion_tokens": 65536
   }'
-```
-
-**方式二：流式响应（需解析 SSE 格式）**
-
-流式响应以 `data: ` 开头的 SSE 格式返回，每行是一个 JSON 片段：
-
-```bash
-# 保存流式响应到文件
-curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
-    "model": "ernie-5.0-thinking-preview",
-    "messages": [...],
-    "stream": true,
-    "max_completion_tokens": 65536
-  }' > stream_output.txt
-
-# 解析 SSE 格式（使用 Python）
-python -c "
-import json
-content = ''
-with open('stream_output.txt') as f:
-    for line in f:
-        if line.startswith('data: ') and line.strip() != 'data: [DONE]':
-            try:
-                chunk = json.loads(line[6:])
-                if 'choices' in chunk:
-                    content += chunk['choices'][0].get('delta', {}).get('content', '')
-            except: pass
-print(json.loads(content) if content else 'Failed')
-"
 ```
 
 **返回结构**:
@@ -209,36 +190,46 @@ print(json.loads(content) if content else 'Failed')
 
 > 📖 详细 API 参数参见 [references/api_reference.md](references/api_reference.md#图像生成-api)
 
-```bash
-curl -s https://aistudio.baidu.com/llm/lmapi/v3/images/generations \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
-    "model": "ernie-image-turbo",
-    "prompt": "【拼接后的完整Prompt】",
-    "n": 1,
-    "response_format": "b64_json",
-    "size": "1024x1024",
-    "use_pe": true,
-    "num_inference_steps": 8,
-    "guidance_scale": 1.0
-  }'
+**推荐方式：使用 OpenAI SDK**
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="https://aistudio.baidu.com/llm/lmapi/v3"
+)
+
+# 生成图像
+response = client.images.generate(
+    model="ernie-image-turbo",
+    prompt="【拼接后的完整Prompt】",
+    n=1,
+    response_format="b64_json",  # 或 "url"
+    size="1024x1024",
+    extra_body={
+        "seed": 42,
+        "use_pe": True,
+        "num_inference_steps": 8,
+        "guidance_scale": 1.0
+    }
+)
+
+# 保存图像
+image_bytes = base64.b64decode(response.data[0].b64_json)
+with open("panel_01.png", "wb") as f:
+    f.write(image_bytes)
 ```
 
-**返回格式**: 图像以 base64 编码返回。
+**支持尺寸**:
 
-```json
-{
-  "created": 1234567890,
-  "data": [{
-    "b64_json": "iVBORw0KGgoAAAANSUhEUgA..."
-  }]
-}
-```
-
-**保存图像**:
-
-```bash
-# 从 JSON 提取 base64 并保存
-echo "iVBORw0KGgoAAAANSUhEUgA..." | base64 -d > panel_01.png
-```
+| 尺寸 | 适用场景 |
+|-----|---------|
+| `1024x1024` | 单个 Panel（正方形） |
+| `1376x768` | 全局大图（横向长条） |
+| `768x1376` | 全局大图（竖向长条） |
+| `1264x848`, `1200x896`, `896x1200`, `848x1264` | 其他比例 |
 
 #### Phase 2b: 多模态反馈迭代
 
@@ -314,17 +305,33 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
 
 #### Phase 3c: 大图生成
 
-```bash
-curl -s https://aistudio.baidu.com/llm/lmapi/v3/images/generations \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
-    "model": "ernie-image-turbo",
-    "prompt": "【全局Prompt】",
-    "n": 1,
-    "response_format": "b64_json",
-    "size": "2048x2048",
-    "use_pe": true,
-    "num_inference_steps": 8,
-    "guidance_scale": 1.0
-  }'
+> ⚠️ **尺寸注意**: `ernie-image-turbo` 最大支持 `1376x768`，不支持 `2048x2048`。
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="https://aistudio.baidu.com/llm/lmapi/v3"
+)
+
+response = client.images.generate(
+    model="ernie-image-turbo",
+    prompt="【全局Prompt】",
+    n=1,
+    response_format="b64_json",
+    size="1376x768",  # 最大横向尺寸
+    extra_body={
+        "use_pe": True,
+        "num_inference_steps": 8,
+        "guidance_scale": 1.0
+    }
+)
+
+image_bytes = base64.b64decode(response.data[0].b64_json)
+with open("global_comic.png", "wb") as f:
+    f.write(image_bytes)
 ```
 
 #### Phase 3d: 大图反馈迭代（可选）

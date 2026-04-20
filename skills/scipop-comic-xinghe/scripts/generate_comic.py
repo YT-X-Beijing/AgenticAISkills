@@ -6,7 +6,7 @@
     python generate_comic.py --article "科普文章内容" --output ./output/
 
 依赖:
-    pip install requests
+    pip install openai
 """
 
 import os
@@ -18,125 +18,105 @@ import time
 from pathlib import Path
 
 try:
-    import requests
+    from openai import OpenAI
 except ImportError:
-    print("请安装 requests: pip install requests")
+    print("请安装 openai: pip install openai")
     sys.exit(1)
 
 
 class SciPopComicGenerator:
-    """科普连环画生成器"""
+    """科普连环画生成器 - 使用 OpenAI SDK"""
 
-    CHAT_ENDPOINT = "https://aistudio.baidu.com/llm/lmapi/v3/chat/completions"
-    IMAGE_ENDPOINT = "https://aistudio.baidu.com/llm/lmapi/v3/images/generations"
+    BASE_URL = "https://aistudio.baidu.com/llm/lmapi/v3"
     ANALYSIS_MODEL = "ernie-5.0-thinking-preview"
     IMAGE_MODEL = "ernie-image-turbo"
 
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
+    # 支持的图像尺寸
+    SUPPORTED_SIZES = ["1024x1024", "1376x768", "1264x848", "1200x896", "896x1200", "848x1264", "768x1376"]
 
-    def _call_chat_api(self, payload: dict, max_retries: int = 3) -> dict:
-        """调用文本/多模态API，支持重试和流式响应解析"""
+    def __init__(self, api_key: str):
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=self.BASE_URL
+        )
+
+    def _call_chat_api(self, messages: list, stream: bool = True, max_retries: int = 3) -> dict:
+        """调用文本/多模态API，支持重试和流式响应"""
         for attempt in range(max_retries):
             try:
-                response = requests.post(
-                    self.CHAT_ENDPOINT,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=300,  # 思考模型可能需要更长时间
-                    stream=payload.get("stream", False)
+                response = self.client.chat.completions.create(
+                    model=self.ANALYSIS_MODEL,
+                    messages=messages,
+                    stream=stream,
+                    max_completion_tokens=65536
                 )
 
-                if response.status_code == 200:
-                    # 处理流式响应
-                    if payload.get("stream", False):
-                        return self._parse_stream_response(response)
-                    else:
-                        return response.json()
-                elif response.status_code == 401:
+                if stream:
+                    # 解析流式响应
+                    full_content = ""
+                    for chunk in response:
+                        if chunk.choices and len(chunk.choices) > 0:
+                            delta = chunk.choices[0].delta
+                            if hasattr(delta, 'content') and delta.content:
+                                full_content += delta.content
+                    return {"content": full_content}
+                else:
+                    return {"content": response.choices[0].message.content}
+
+            except Exception as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Unauthorized" in error_msg:
                     raise Exception("API Key 无效或过期")
-                elif response.status_code == 402:
+                elif "402" in error_msg or "insufficient" in error_msg.lower():
                     raise Exception("账户余额不足，请充值")
-                elif response.status_code == 429:
+                elif "429" in error_msg or "rate" in error_msg.lower():
                     wait_time = (attempt + 1) ** 2
                     print(f"请求频繁，{wait_time}秒后重试...")
                     time.sleep(wait_time)
                 else:
                     wait_time = (attempt + 1) ** 2
-                    print(f"HTTP {response.status_code}，{wait_time}秒后重试...")
+                    print(f"请求错误: {error_msg}，{wait_time}秒后重试...")
                     time.sleep(wait_time)
-            except requests.exceptions.Timeout:
-                print(f"请求超时，重试 {attempt + 1}/{max_retries}")
-                time.sleep(2)
 
         raise Exception(f"API调用失败，已重试{max_retries}次")
 
-    def _parse_stream_response(self, response) -> dict:
-        """解析 SSE 流式响应，合并为完整结果"""
-        full_content = ""
-        for line in response.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            if line.startswith("data: "):
-                data = line[6:]  # 去掉 "data: " 前缀
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                    if "choices" in chunk and len(chunk["choices"]) > 0:
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            full_content += content
-                            # 可选：打印进度
-                            # print(content, end="", flush=True)
-                except json.JSONDecodeError:
-                    continue
-
-        # 返回与非流式响应相同的结构
-        return {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": full_content
-                }
-            }]
-        }
-
-    def _call_image_api(self, payload: dict, max_retries: int = 3) -> dict:
-        """调用图像生成API，支持重试"""
+    def _generate_image(self, prompt: str, size: str = "1024x1024", max_retries: int = 3) -> bytes:
+        """生成图像，返回图像字节"""
         for attempt in range(max_retries):
             try:
-                response = requests.post(
-                    self.IMAGE_ENDPOINT,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=120
+                response = self.client.images.generate(
+                    model=self.IMAGE_MODEL,
+                    prompt=prompt,
+                    n=1,
+                    response_format="b64_json",
+                    size=size,
+                    extra_body={
+                        "use_pe": True,
+                        "num_inference_steps": 8,
+                        "guidance_scale": 1.0
+                    }
                 )
 
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code == 401:
+                # 解码 base64 图像
+                image_b64 = response.data[0].b64_json
+                return base64.b64decode(image_b64)
+
+            except Exception as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Unauthorized" in error_msg:
                     raise Exception("API Key 无效或过期")
-                elif response.status_code == 402:
+                elif "402" in error_msg or "insufficient" in error_msg.lower():
                     raise Exception("账户余额不足，请充值")
-                elif response.status_code == 429:
+                elif "429" in error_msg or "rate" in error_msg.lower():
                     wait_time = (attempt + 1) ** 2
                     print(f"请求频繁，{wait_time}秒后重试...")
                     time.sleep(wait_time)
                 else:
                     wait_time = (attempt + 1) ** 2
-                    print(f"HTTP {response.status_code}，{wait_time}秒后重试...")
+                    print(f"图像生成错误: {error_msg}，{wait_time}秒后重试...")
                     time.sleep(wait_time)
-            except requests.exceptions.Timeout:
-                print(f"请求超时，重试 {attempt + 1}/{max_retries}")
-                time.sleep(2)
 
-        raise Exception(f"图像API调用失败，已重试{max_retries}次")
+        raise Exception(f"图像生成失败，已重试{max_retries}次")
 
     def phase1_analyze(self, article: str) -> dict:
         """Phase 1: 文章解析与Prompt建模"""
@@ -145,19 +125,13 @@ class SciPopComicGenerator:
 
         system_prompt = """你是一位科普连环画脚本编写专家。分析文章并根据内容的丰富程度和结构确定最合适的 Panel 数量（4-6个）。输出一个 JSON 对象，包含四个字段："recommended_panels"（整数，4-6），"recommendation_reason"（一句话中文解释为什么这个 Panel 数量适合该文章），"style_seed"（简短的中文风格描述，在所有 Panel 中复用），"panels"（与推荐数量匹配的对象数组，每个对象包含 "id"、"scene" 中文场景描述、"image_prompt" 中文图像生成提示）。仅输出原始 JSON，不要使用 markdown 代码块。"""
 
-        payload = {
-            "model": self.ANALYSIS_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": article}
-            ],
-            "stream": True,
-            "response_format": {"type": "json_object"},
-            "max_completion_tokens": 65536
-        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": article}
+        ]
 
-        result = self._call_chat_api(payload)
-        content = result["choices"][0]["message"]["content"]
+        result = self._call_chat_api(messages, stream=True)
+        content = result["content"]
 
         if isinstance(content, str):
             data = json.loads(content)
@@ -176,21 +150,7 @@ class SciPopComicGenerator:
 
         print(f"  生成 Panel {panel_id}...")
 
-        payload = {
-            "model": self.IMAGE_MODEL,
-            "prompt": full_prompt,
-            "n": 1,
-            "response_format": "b64_json",
-            "size": "1024x1024",
-            "use_pe": True,
-            "num_inference_steps": 8,
-            "guidance_scale": 1.0
-        }
-
-        result = self._call_image_api(payload)
-        image_data = result["data"][0]["b64_json"]
-
-        return base64.b64decode(image_data)
+        return self._generate_image(full_prompt, size="1024x1024")
 
     def phase2_generate_all(self, phase1_result: dict, output_dir: Path) -> list:
         """Phase 2: 生成所有Panel"""
@@ -237,21 +197,8 @@ class SciPopComicGenerator:
 每格之间用粗黑边框清晰分隔，按阅读顺序排列：
 {panel_descriptions}"""
 
-        payload = {
-            "model": self.IMAGE_MODEL,
-            "prompt": global_prompt,
-            "n": 1,
-            "response_format": "b64_json",
-            "size": "2048x2048",
-            "use_pe": True,
-            "num_inference_steps": 8,
-            "guidance_scale": 1.0
-        }
-
-        result = self._call_image_api(payload)
-        image_data = result["data"][0]["b64_json"]
-
-        image_bytes = base64.b64decode(image_data)
+        # 注意：ernie-image-turbo 最大支持 1376x768，这里用最大的横向尺寸
+        image_bytes = self._generate_image(global_prompt, size="1376x768")
 
         # 保存大图
         global_path = output_dir / "global_comic.png"
