@@ -108,6 +108,12 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
 
 **API 调用模板**:
 
+> ⚠️ **流式响应说明**: `ernie-5.0-thinking-preview` 默认使用流式响应（`stream: true`）。
+> - **curl 命令**：建议设置 `"stream": false` 获取非流式响应，便于直接解析 JSON
+> - **Python 脚本**：已内置流式响应解析逻辑，支持 `stream: true`
+
+**方式一：非流式响应（推荐用于 curl）**
+
 ```bash
 curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
     "model": "ernie-5.0-thinking-preview",
@@ -121,10 +127,39 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
         "content": "【科普文章全文】"
       }
     ],
-    "stream": true,
+    "stream": false,
     "response_format": {"type": "json_object"},
     "max_completion_tokens": 65536
   }'
+```
+
+**方式二：流式响应（需解析 SSE 格式）**
+
+流式响应以 `data: ` 开头的 SSE 格式返回，每行是一个 JSON 片段：
+
+```bash
+# 保存流式响应到文件
+curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content-Type: application/json" \n  -H "Authorization: Bearer $AISTUDIO_API_KEY" \n  -d '{
+    "model": "ernie-5.0-thinking-preview",
+    "messages": [...],
+    "stream": true,
+    "max_completion_tokens": 65536
+  }' > stream_output.txt
+
+# 解析 SSE 格式（使用 Python）
+python -c "
+import json
+content = ''
+with open('stream_output.txt') as f:
+    for line in f:
+        if line.startswith('data: ') and line.strip() != 'data: [DONE]':
+            try:
+                chunk = json.loads(line[6:])
+                if 'choices' in chunk:
+                    content += chunk['choices'][0].get('delta', {}).get('content', '')
+            except: pass
+print(json.loads(content) if content else 'Failed')
+"
 ```
 
 **返回结构**:

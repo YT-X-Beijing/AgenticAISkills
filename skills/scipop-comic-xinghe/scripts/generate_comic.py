@@ -40,18 +40,23 @@ class SciPopComicGenerator:
         }
 
     def _call_chat_api(self, payload: dict, max_retries: int = 3) -> dict:
-        """调用文本/多模态API，支持重试"""
+        """调用文本/多模态API，支持重试和流式响应解析"""
         for attempt in range(max_retries):
             try:
                 response = requests.post(
                     self.CHAT_ENDPOINT,
                     headers=self.headers,
                     json=payload,
-                    timeout=120
+                    timeout=300,  # 思考模型可能需要更长时间
+                    stream=payload.get("stream", False)
                 )
 
                 if response.status_code == 200:
-                    return response.json()
+                    # 处理流式响应
+                    if payload.get("stream", False):
+                        return self._parse_stream_response(response)
+                    else:
+                        return response.json()
                 elif response.status_code == 401:
                     raise Exception("API Key 无效或过期")
                 elif response.status_code == 402:
@@ -69,6 +74,38 @@ class SciPopComicGenerator:
                 time.sleep(2)
 
         raise Exception(f"API调用失败，已重试{max_retries}次")
+
+    def _parse_stream_response(self, response) -> dict:
+        """解析 SSE 流式响应，合并为完整结果"""
+        full_content = ""
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data = line[6:]  # 去掉 "data: " 前缀
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    if "choices" in chunk and len(chunk["choices"]) > 0:
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            full_content += content
+                            # 可选：打印进度
+                            # print(content, end="", flush=True)
+                except json.JSONDecodeError:
+                    continue
+
+        # 返回与非流式响应相同的结构
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": full_content
+                }
+            }]
+        }
 
     def _call_image_api(self, payload: dict, max_retries: int = 3) -> dict:
         """调用图像生成API，支持重试"""

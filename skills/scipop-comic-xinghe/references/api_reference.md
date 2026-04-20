@@ -86,6 +86,8 @@ Authorization: Bearer $AISTUDIO_API_KEY
 
 ### 返回格式
 
+**非流式响应** (`stream: false`)：
+
 ```json
 {
   "choices": [{
@@ -95,6 +97,73 @@ Authorization: Bearer $AISTUDIO_API_KEY
     }
   }]
 }
+```
+
+**流式响应** (`stream: true`)：
+
+返回 SSE (Server-Sent Events) 格式，每行以 `data: ` 开头：
+
+```
+data: {"choices":[{"delta":{"content":"你"}}]}
+
+data: {"choices":[{"delta":{"content":"好"}}]}
+
+data: [DONE]
+```
+
+### 流式响应解析
+
+> ⚠️ **重要提示**: 当 `stream: true` 时，不能直接使用 `response.json()` 解析！
+
+**Python 解析示例**：
+
+```python
+import requests
+import json
+
+response = requests.post(
+    url,
+    headers=headers,
+    json={"model": "ernie-5.0-thinking-preview", "messages": [...], "stream": True},
+    stream=True
+)
+
+full_content = ""
+for line in response.iter_lines(decode_unicode=True):
+    if line and line.startswith("data: "):
+        data = line[6:]  # 去掉 "data: " 前缀
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+            if "choices" in chunk and len(chunk["choices"]) > 0:
+                content = chunk["choices"][0].get("delta", {}).get("content", "")
+                full_content += content
+        except json.JSONDecodeError:
+            continue
+
+# full_content 现在包含完整的响应内容
+result = json.loads(full_content)
+```
+
+**Shell/JQ 解析示例**：
+
+```bash
+# 保存流式响应
+curl -s $URL -H "Authorization: Bearer $KEY" -d '{"model":"ernie-5.0-thinking-preview","messages":[...],"stream":true}' > stream.txt
+
+# 使用 Python 提取内容
+python3 -c "
+import sys, json
+content = ''
+for line in open('stream.txt'):
+    if line.startswith('data: ') and line.strip() != 'data: [DONE]':
+        try:
+            chunk = json.loads(line[6:])
+            content += chunk['choices'][0].get('delta', {}).get('content', '')
+        except: pass
+print(content)
+"
 ```
 
 ---
