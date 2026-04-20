@@ -182,8 +182,12 @@ class SciPopComicGenerator:
 
         return self._generate_image(full_prompt, size="1024x1024")
 
-    def phase2_generate_all(self, phase1_result: dict, output_dir: Path) -> list:
-        """Phase 2: 生成所有Panel"""
+    def phase2_generate_all(self, phase1_result: dict, output_dir: Path) -> tuple:
+        """Phase 2: 生成所有Panel
+
+        Returns:
+            (panel_paths, final_prompts): 图像路径列表和最终使用的prompt字典
+        """
         print("=" * 50)
         print("Phase 2: 生成Panel图像...")
 
@@ -191,14 +195,21 @@ class SciPopComicGenerator:
         panels = phase1_result["panels"]
         panel_paths = []
         captions = {}
+        final_prompts = {}  # 记录每个 Panel 最终使用的 prompt（用于 Phase 3）
 
         for panel in panels:
             panel_id = panel["id"]
             image_prompt = panel["image_prompt"]
             caption = panel.get("caption", "")
 
+            # 构建完整 prompt（包含 style_seed）
+            full_prompt = f"{image_prompt}，{style_seed}，高质量，连环画"
+
             # 保存旁白
             captions[panel_id] = caption
+
+            # 保存最终 prompt（用于 Phase 3 全局合成）
+            final_prompts[panel_id] = full_prompt
 
             print(f"  生成 Panel {panel_id}: {caption}")
 
@@ -218,26 +229,41 @@ class SciPopComicGenerator:
         captions_path.write_text(json.dumps(captions, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\n  旁白已保存: {captions_path}")
 
-        return panel_paths
+        # 保存最终 prompts（用于 Phase 3）
+        prompts_path = output_dir / "final_prompts.json"
+        prompts_path.write_text(json.dumps(final_prompts, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  最终 Prompts 已保存: {prompts_path}")
 
-    def phase3_generate_global(self, phase1_result: dict, layout: str, output_dir: Path) -> str:
-        """Phase 3: 生成全局大图"""
+        return panel_paths, final_prompts
+
+    def phase3_generate_global(self, style_seed: str, final_prompts: dict, layout: str, output_dir: Path) -> str:
+        """Phase 3: 生成全局大图
+
+        Args:
+            style_seed: 风格种子
+            final_prompts: Panel ID -> 最终 image_prompt 的映射（来自 Phase 2 迭代后的满意结果）
+            layout: 布局（如 2x2, 2x3）
+            output_dir: 输出目录
+
+        Returns:
+            全局大图路径
+        """
         print("=" * 50)
         print("Phase 3: 生成全局大图...")
 
-        style_seed = phase1_result["style_seed"]
-        panels = phase1_result["panels"]
-        num_panels = len(panels)
+        num_panels = len(final_prompts)
 
-        # 构建全局Prompt
+        # 使用 Phase 2 迭代后的最终 Prompt 构建全局 Prompt
         panel_descriptions = "\n".join([
-            f"第{p['id']}格：{p['image_prompt']}"
-            for p in panels
+            f"第{panel_id}格：{final_prompts[panel_id]}"
+            for panel_id in sorted(final_prompts.keys())
         ])
 
         global_prompt = f"""{layout} 格连环画，共 {num_panels} 格，{style_seed}，
 每格之间用粗黑边框清晰分隔，按阅读顺序排列：
 {panel_descriptions}"""
+
+        print(f"  使用 {num_panels} 个最终 Prompt 合并生成全局图...")
 
         # 注意：ernie-image-turbo 最大支持 1376x768，这里用最大的横向尺寸
         image_bytes = self._generate_image(global_prompt, size="1376x768")
@@ -294,11 +320,12 @@ def main():
     layout = args.layout or layout_recommendations.get(num_panels, "2x3")
     print(f"\n使用布局: {layout}")
 
-    # Phase 2
-    panel_paths = generator.phase2_generate_all(phase1_result, output_dir)
+    # Phase 2: 生成所有 Panel，返回图像路径和最终 prompts
+    panel_paths, final_prompts = generator.phase2_generate_all(phase1_result, output_dir)
 
-    # Phase 3
-    global_path = generator.phase3_generate_global(phase1_result, layout, output_dir)
+    # Phase 3: 使用最终 prompts 生成全局大图
+    style_seed = phase1_result["style_seed"]
+    global_path = generator.phase3_generate_global(style_seed, final_prompts, layout, output_dir)
 
     print("\n" + "=" * 50)
     print("✅ 连环画生成完成!")

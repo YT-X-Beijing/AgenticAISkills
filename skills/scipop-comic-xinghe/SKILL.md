@@ -296,6 +296,8 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
 
 **迭代循环**: 用改进后的 Prompt 重新执行 Phase 2a，直至用户满意。
 
+> ⚠️ **重要**: 保留用户满意的最终 Prompt，用于 Phase 3 全局合成。
+
 ---
 
 ### Phase 3: N×N 全局合成
@@ -322,18 +324,39 @@ curl -s https://aistudio.baidu.com/llm/lmapi/v3/chat/completions \n  -H "Content
 
 #### Phase 3b: 全局 Prompt 构建
 
+> ⚠️ **关键**: 使用 **Phase 2b 迭代后用户满意的最终 Prompt**，而非 Phase 1 原始 Prompt。
+
+**合并规则**:
+1. 收集所有 Panel 用户满意的最终 `image_prompt`
+2. 添加连环画结构指令：`{grid} 格连环画，共 {num_panels} 格`
+3. 添加风格种子：`{style_seed}`
+4. 添加分隔要求：`每格之间用粗黑边框清晰分隔，按阅读顺序排列`
+5. 按顺序排列各 Panel 的最终 prompt
+
 **提示词长度建议**: 全局合成以 200-400 中文字符为宜。
 
 ```
 {grid} 格连环画，共 {num_panels} 格，{style_seed}，
 每格之间用粗黑边框清晰分隔，按阅读顺序排列：
-第1格：{panel_1_image_prompt}
-第2格：{panel_2_image_prompt}
+第1格：{panel_1_final_image_prompt}
+第2格：{panel_2_final_image_prompt}
 ...
-第N格：{panel_N_image_prompt}
+第N格：{panel_N_final_image_prompt}
 ```
 
 若有空余格，末尾追加"剩余格子留白"。
+
+**示例**（假设 Panel 1 经过迭代优化后）:
+
+```
+# 原始 Prompt (Phase 1):
+一位科学家在实验室中，扁平插画风格
+
+# 迭代后最终 Prompt (Phase 2b 满意结果):
+一位戴眼镜的女科学家，穿着白色实验服，正激动地指着屏幕，现代实验室背景有显微镜和电脑，屏幕上显示橙红色的黑洞光环图像，扁平插画风格，清晰轮廓，科学配色，高质量
+
+# Phase 3 合并时使用迭代后的最终 Prompt
+```
 
 #### Phase 3c: 大图生成
 
